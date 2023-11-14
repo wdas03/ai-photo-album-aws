@@ -1,0 +1,27 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 18 # or the version you are using
+    commands:
+      - echo "Installing source npm dependencies..."
+      - npm install
+  build:
+    commands:
+      - echo "Build started."
+      - npm run static-build # Command to build the Next.js 
+  post_build:
+    commands:
+      - echo "Build completed"
+      - echo "Uploading build to S3 Bucket"
+      - aws s3 sync ./out s3://ai-photos-album-app-whd-mc --delete
+
+# artifacts:
+#   files:
+#     - '*/'
+#   base-directory: out # the output directory
+
+# cache:
+#   paths:
+#     - 'node_modules/*/'

@@ -1,0 +1,597 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Default: ai-photos-bucket-whd
+  apiGatewayName:
+    Type: String
+    Default: AIPhotoAlbum
+  apiGatewayStageName:
+    Type: String
+    AllowedPattern: '[a-z0-9]+'
+    Default: v1
+  openSearchDomainName:
+    Type: String
+    AllowedPattern: '[a-z0-9]+'
+    Default: photos
+
+Resources:
+  PhotosBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: indexPhotoLambdaInvokePermission
+    Properties:
+      BucketName: !Ref S3BucketName
+      PublicAccessBlockConfiguration:
+          BlockPublicAcls: false
+      OwnershipControls:
+          Rules:
+            - ObjectOwnership: ObjectWriter
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:Put
+            Function: !GetAtt [ indexPhotoLambda, Arn]
+
+  APIGateway:
+    Type: AWS::ApiGateway::RestApi
+    DeletionPolicy: Delete
+    Properties:
+      BinaryMediaTypes: ["*/*"]
+      Name: !Ref apiGatewayName
+      Description: "AI Photo Search application."
+      Body:
+        swagger: "2.0"
+        info:
+          description: "AI Photo Search application, built during the Cloud and Big Data course\
+            \ at Columbia University."
+          version: "1.0.0"
+          title: "AI Photo Search"
+        schemes:
+        - "https"
+        paths:
+          /search:
+            get:
+              operationId: "searchPhotos"
+              produces:
+              - "application/json"
+              parameters:
+              - name: "q"
+                in: "query"
+                required: true
+                type: "string"
+              responses:
+                "200":
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/SearchResponse"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+                "500":
+                  description: "500 response"
+                  schema:
+                    $ref: "#/definitions/Error"
+                "403":
+                  description: "403 response"
+                  schema:
+                    $ref: "#/definitions/Error"
+              x-amazon-apigateway-integration:
+                httpMethod: "GET"
+                credentials: !GetAtt InvokeLambdaRole.Arn
+                uri: "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:007091449980:function:search-photos/invocations"
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                passthroughBehavior: "when_no_match"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+            options:
+              parameters:
+              - name: "q"
+                in: "query"
+                required: false
+                type: "string"
+              responses:
+                "200":
+                  description: "200 response"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+                    Access-Control-Allow-Methods:
+                      type: "string"
+                    Access-Control-Allow-Headers:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                httpMethod: "POST"
+                credentials: !GetAtt InvokeLambdaRole.Arn
+                uri: "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:007091449980:function:search-photos/invocations"
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+                      method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                passthroughBehavior: "when_no_match"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+          /upload:
+            /{bucket}/{key}:
+              put:
+                parameters:
+                - name: "key"
+                  in: "path"
+                  required: true
+                  type: "string"
+                - name: "bucket"
+                  in: "path"
+                  required: true
+                  type: "string"
+                - name: "x-amz-meta-customLabels"
+                  in: "header"
+                  required: false
+                  type: "string"
+                responses:
+                  "200":
+                    description: "200 response"
+                    headers:
+                      Access-Control-Allow-Origin:
+                        type: "string"
+                security:
+                - api_key: []
+                x-amazon-apigateway-integration:
+                  httpMethod: "PUT"
+                  credentials: !GetAtt ApiGatewayS3ProxyRole.Arn
+                  uri: "arn:aws:apigateway:us-east-1:s3:path/{bucket}/{key}"
+                  responses:
+                    default:
+                      statusCode: "200"
+                      responseParameters:
+                        method.response.header.Access-Control-Allow-Origin: "'*'"
+                  requestParameters:
+                    integration.request.header.x-amz-meta-customLabels: "method.request.header.x-amz-meta-customLabels"
+                    integration.request.path.key: "method.request.path.key"
+                    integration.request.path.bucket: "method.request.path.bucket"
+                  passthroughBehavior: "when_no_match"
+                  type: "aws"
+              options:
+                consumes:
+                - "application/json"
+                parameters:
+                - name: "bucket"
+                  in: "path"
+                  required: true
+                  type: "string"
+                - name: "key"
+                  in: "path"
+                  required: true
+                  type: "string"
+                responses:
+                  "200":
+                    description: "200 response"
+                    headers:
+                      Access-Control-Allow-Origin:
+                        type: "string"
+                      Access-Control-Allow-Methods:
+                        type: "string"
+                      Access-Control-Allow-Headers:
+                        type: "string"
+                x-amazon-apigateway-integration:
+                  responses:
+                    default:
+                      statusCode: "200"
+                      responseParameters:
+                        method.response.header.Access-Control-Allow-Methods: "'OPTIONS,PUT'"
+                        method.response.header.Access-Control-Allow-Headers: "'x-amz-meta-customLabels,Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                        method.response.header.Access-Control-Allow-Origin: "'*'"
+                  requestTemplates:
+                    application/json: "{\"statusCode\": 200}"
+                  passthroughBehavior: "when_no_match"
+                  type: "mock"
+        securityDefinitions:
+          api_key:
+            type: "apiKey"
+            name: "x-api-key"
+            in: "header"
+        definitions:
+          Error:
+            type: "object"
+            properties:
+              code:
+                type: "integer"
+                format: "int32"
+              message:
+                type: "string"
+          Photo:
+            type: "object"
+            properties:
+              url:
+                type: "string"
+              labels:
+                type: "array"
+                items:
+                  type: "string"
+          SearchResponse:
+            type: "object"
+            properties:
+              results:
+                type: "array"
+                items:
+                  $ref: "#/definitions/Photo"
+        x-amazon-apigateway-gateway-responses:
+          DEFAULT_5XX:
+            responseParameters:
+              gatewayresponse.header.Access-Control-Allow-Methods: "'OPTIONS,PUT'"
+              gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+              gatewayresponse.header.Access-Control-Allow-Headers: "'x-amz-meta-customLabels,Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          DEFAULT_4XX:
+            responseParameters:
+              gatewayresponse.header.Access-Control-Allow-Methods: "'OPTIONS,PUT'"
+              gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+              gatewayresponse.header.Access-Control-Allow-Headers: "'x-amz-meta-customLabels,Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        x-amazon-apigateway-binary-media-types:
+        - "image/jpeg"
+        - "image/jpg"
+        - "image/png"
+        - "image/*"
+
+  OpenSearch:
+    Type: AWS::OpenSearchService::Domain
+    Properties:
+      DomainName: !Sub "${openSearchDomainName}"
+      ClusterConfig:
+        InstanceType: t3.small.search
+        InstanceCount: 1
+      EBSOptions:
+        EBSEnabled: True
+        VolumeType: gp2
+        VolumeSize: 10
+      AccessPolicies: {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": "*"
+              },
+              "Action": [
+                "es:*",
+                "indices:data/write/bulk*",
+                "indices:data/write/delete",
+                "indices:data/write/index",
+                "indices:data/write/update",
+                "indices:data/rad/search"
+              ],
+              "Resource": !Sub "arn:aws:es:us-east-1:${AWS::AccountId}:domain/${openSearchDomainName}/*"
+            }
+          ]
+        }
+      AdvancedSecurityOptions:
+        Enabled: true
+        InternalUserDatabaseEnabled: true
+        MasterUserOptions:
+          MasterUserName: master
+          MasterUserPassword: Master@123
+      NodeToNodeEncryptionOptions:
+        Enabled: true
+      DomainEndpointOptions:
+        EnforceHTTPS: true
+      EncryptionAtRestOptions:
+        Enabled: true
+
+  ApiGatewayDeployment:
+      Type: "AWS::ApiGateway::Deployment"
+      Properties:
+          RestApiId: !Ref APIGateway
+    
+  ApiGatewayStage:
+      Type: "AWS::ApiGateway::Stage"
+      Properties:
+          StageName: "final"
+          DeploymentId: !Ref ApiGatewayDeployment
+          RestApiId: !Ref APIGateway
+          CacheClusterEnabled: false
+          CacheClusterSize: "0.5"
+          MethodSettings: 
+            - 
+              CacheDataEncrypted: false
+              CacheTtlInSeconds: 300
+              CachingEnabled: false
+              DataTraceEnabled: false
+              HttpMethod: "*"
+              MetricsEnabled: false
+              ResourcePath: "/*"
+              ThrottlingBurstLimit: 5000
+              ThrottlingRateLimit: 10000
+          TracingEnabled: false
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+          BlockPublicAcls: false
+      OwnershipControls:
+          Rules:
+            - ObjectOwnership: ObjectWriter
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      PolicyDocument:
+        Id: PublicWebsitePolicy
+        Version: 2012-10-17
+        Statement:
+          - Sid: PublicReadForGetBucketObjects
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Join
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref FrontendBucket
+                - /*
+      Bucket: !Ref FrontendBucket
+
+  PhotosBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      PolicyDocument: 
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
+          - Sid: ListObjectsInBucket
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:ListBucket'
+            Resource: !Sub 'arn:aws:s3:::${S3BucketName}'
+          - Sid: AllObjectActions
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:*Object'
+            Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
+      Bucket: !Ref PhotosBucket
+
+  indexPhotoLambdaRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {
+                    "Service": "lambda.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+            }
+        ]
+      }
+      ManagedPolicyArns: [
+                "arn:aws:iam::aws:policy/AmazonS3FullAccess",
+                "arn:aws:iam::aws:policy/AmazonRekognitionFullAccess",
+                "arn:aws:iam::aws:policy/AmazonOpenSearchServiceFullAccess",
+                "arn:aws:iam::aws:policy/AmazonAPIGatewayInvokeFullAccess"
+            ]
+      Path: "/"
+      Policies: 
+        - PolicyName: "PolicyLambda"
+          PolicyDocument: {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                      "logs:PutLogEvents",
+                      "logs:CreateLogGroup",
+                      "logs:CreateLogStream"
+                  ],
+                  "Resource": "arn:aws:logs:*:*:*"
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "s3:GetObject"
+                    ],
+                    "Resource": "arn:aws:s3:::*/*"
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": "s3:PutBucketPolicy",
+                    "Resource": "arn:aws:s3:::*/*"
+                }
+            ]
+          }
+      RoleName: lambda-s3-role
+     
+  searchPhotoLambdaRole:    
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {
+                    "Service": "lambda.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+            }
+        ]
+      }
+      ManagedPolicyArns: [
+                "arn:aws:iam::aws:policy/AmazonLexFullAccess",
+                "arn:aws:iam::aws:policy/AmazonOpenSearchServiceFullAccess",
+                "arn:aws:iam::aws:policy/AmazonAPIGatewayInvokeFullAccess"
+            ]
+      Path: "/"
+      Policies: 
+        - PolicyName: "PolicyLex"
+          PolicyDocument: {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                  "Sid": "VisualEditor0",
+                  "Effect": "Allow",
+                  "Action": [
+                    "lex:CreateUploadUrl",
+                    "lex:ListBuiltInSlotTypes",
+                    "lex:ListBots",
+                    "lex:ListBuiltInIntents",
+                    "lex:ListImports",
+                    "lex:ListExports"
+                ],
+                "Resource": "*"
+              }
+            ]
+          }  
+        - PolicyName: "PolicyLambda2"
+          PolicyDocument: {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                    "logs:PutLogEvents",
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream"
+                ],
+                "Resource": "arn:aws:logs:*:*:*"
+              }
+            ]
+          }     
+      RoleName: lambda-lex-role
+
+  indexPhotoLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import json
+          def lambda_handler(event, context):
+              print(json.dumps(event, indent=2))
+              response = {
+                  "statusCode": 200,
+                  "body": json.dumps('Hello again from Lambda!')
+              }
+              return response
+
+      Description: Lambda function Index CF
+      MemorySize: 128
+      Environment:
+        Variables:
+          REGION: us-east-1
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt [indexPhotoLambdaRole, Arn]
+      Timeout: 30
+      Runtime: python3.9
+      FunctionName: index-photos
+
+  searchPhotosLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import json
+          def lambda_handler(event, context):
+              print(json.dumps(event, indent=2))
+              response = {
+                  "statusCode": 200,
+                  "body": json.dumps('Hello again from Lambda!')
+              }
+              return response
+
+      MemorySize: 128
+      Environment:
+        Variables:
+          REGION: us-east-1
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt [searchPhotoLambdaRole, Arn]
+      Timeout: 30
+      Runtime: python3.9
+      FunctionName: search-photos
+
+  indexPhotoLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: indexPhotoLambda
+    Properties: 
+      FunctionName:
+        Fn::GetAtt:
+          - indexPhotoLambda
+          - Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:aws:s3:::${S3BucketName}
+  
+  InvokeLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt searchPhotosLambda.Arn
+
+  
+  ApiGatewayS3ProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: s3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${S3BucketName}'
+                  - !Sub 'arn:aws:s3:::${S3BucketName}/*'
+
+Outputs:
+  WebsiteURL:
+    Value: !GetAtt
+      - FrontendBucket
+      - WebsiteURL
+    Description: URL for website hosted on S3
+  S3BucketSecureURL:
+    Value: !Join
+      - ''
+      - - 'https://'
+        - !GetAtt
+          - FrontendBucket
+          - DomainName
+    Description: Name of S3 bucket to hold website content   
+  apiGatewayInvokeURL:
+    Value: !Sub https://${APIGateway}.execute-api.${AWS::Region}.amazonaws.com/${apiGatewayStageName}       
